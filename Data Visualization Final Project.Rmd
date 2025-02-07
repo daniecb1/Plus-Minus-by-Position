@@ -1,0 +1,393 @@
+---
+title: "Data Visualization Final Project"
+author: "Danielle Contreras"
+date: "2024-10-09"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+library(nbastatR)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 2)
+library(rstanarm)
+library(ggpubr)
+library(kableExtra)
+library(GGally)
+library(sportyR)
+```
+
+# Introduction:
+
+Over time, data analytics has become more important in college and pro sports. New stats have also been developed to measure various things like player performance and team performance. One of these stats is plus-minus, which is used in basketball. Plus-minus shows how a player impacted the game while they were on the court. Ideally, a player with a high positive plus-minus means they made a big impact and helped their team score more than the opponent. However, plus-minus has some drawbacks. A player could have a good plus-minus just because they played alongside strong teammates. There are other versions of plus-minus that adjust for this, but in this analysis, the original plus-minus will be used because the available datasets only include that.
+
+This analysis will look at the relationship between plus-minus and points scored, based on player position, using NBA data from the 2023-2024 season. The data comes from two sources that were combined. The first is from an R package called "nbastatR," and the second, which contains player positions, was downloaded from GitHub. This dataset is called "2023-2024 NBA Player Stats" and includes regular season and playoff data, but only the regular season data will be used here.
+
+We are focusing on the 2023-2024 regular season because teams have been changing how they play offense. Some teams are building around young players, while others are centering their offense around specific positions like centers. With this analysis, we can explore the importance of different player positions. While each player is unique and some may be outliers, understanding how player types contribute to team success could help teams make decisions about who to put on the floor. It could also help teams evaluate current NBA players, looking at how their points compare to their position to see what kind of impact they may have.
+
+The analysis will explore the connection between plus-minus and points, based on position. The goal is to find out what the link is between average plus-minus and average points for different positions. Plus-minus and points are numeric values, while position is a category. Plus-minus is the outcome we are studying, while points and position are the factors that might explain it. To simplify the data, we averaged the plus-minus and points for each player, which reduced the data to 469 players. There were some small data issues, like players being listed differently due to symbols in their names, but due to time constraints, these weren't fixed. Plus-minus represents how a player’s presence on the court affects the score, while points show the average points each player scored per game during the 2023-2024 regular season. There are five positions in the NBA: center, power forward, point guard, small forward, and shooting guard. Each position has different types of players in terms of skills, height, weight, etc., so we will include an interaction between points and position in the analysis to see how the relationship between points and plus-minus changes based on the player’s position.
+
+Below are some summary statistics and graphs based on player position, which show the data that will be analyzed.
+
+
+```{r}
+court_plot <- geom_basketball("nba", display_range = "offense", rotation = 270)
+
+court_plot +
+  annotate("text", x = 0, y = -18, label = "1\nPoint Guard", size = 4, color = "blue2") + 
+  annotate("text", x = -19, y = -25, label = "2\nShooting Guard", size = 4, color = "blue2") + 
+  annotate("text", x = 14, y = -30, label = "3\nSmall Forward", size = 4, color = "blue2") +
+  annotate("text", x = -10, y = -43, label = "4\nPower Forward", size = 4, color = "blue2") +  
+  annotate("text", x = 10, y = -43, label = "5\nCenter", size = 4, color = "blue2")
+
+
+```
+
+
+The first plot shows a basic layout of a basketball court with spots where players might be during offense. It’s not exact but gives a general idea of where each position is typically located. Power forwards and centers are usually bigger players, while point guards, shooting guards, and small forwards are typically smaller.
+
+
+```{r}
+gamedata <- game_logs(seasons = c(2023:2024), return_message = FALSE)
+
+gamedata <- gamedata %>%
+  filter(slugSeason == "2023-24")
+
+
+player_sep_data_raw <- read.csv("C:\\Users\\danie\\OneDrive\\M.A.S\\Data Visualization\\Final Project\\2023-2024 NBA Player Stats - Regular.csv")
+
+
+player_pos <- player_sep_data_raw %>%
+  mutate_at(c(2,3,5), as.factor) %>%
+  group_by(Player) %>%
+  summarise(combined_data = paste(Pos, collapse = ", ")) %>%
+  mutate_at(2, as.factor)
+
+colnames(player_pos) <- c("namePlayer", "Position")
+
+gamedata <- gamedata %>%
+  mutate(namePlayer = as.factor(namePlayer))
+
+all_data <- left_join(gamedata, player_pos, by="namePlayer")
+
+nikola <- all_data %>%
+  mutate(namePlayer = as.character(namePlayer)) %>%
+  filter(str_detect(namePlayer, "Nikola")) %>%
+  filter(slugTeam == "DEN") %>%
+  mutate(Position = as.factor("C")) %>%
+  mutate(namePlayer = as.factor(namePlayer))%>%
+  summarise(AVGpoints = mean(pts),
+AVGpm = mean(plusminus), Position = first(Position)) %>%
+  select(AVGpoints, Position, AVGpm)
+
+all_data2 <- all_data %>%
+  filter(!str_detect(namePlayer, "Nikola")) %>%
+  mutate_at(59, as.character)%>%
+  filter(!grepl("[,-]", Position)) %>%
+  mutate_at(59, as.factor) %>%
+  drop_na(Position) %>%
+  group_by(namePlayer) %>%
+  summarise(AVGpoints = mean(pts),
+AVGpm = mean(plusminus), Position = first(Position)) %>%
+  select(AVGpoints, Position, AVGpm) %>%
+  ungroup()
+
+
+all_data_final <- rbind(all_data2, nikola)
+
+all_data_final <- all_data_final %>%
+  mutate_at(c(1,3), round,2) 
+
+original_ggplot <- all_data_final %>%
+  ggplot(aes(x=AVGpoints, y=AVGpm, color=Position)) + geom_point() + labs(x="Average Points", y="Average Plus Minus", title="Average Points vs. Average Plus Minus for Each Position")
+
+
+all_data_summary <- all_data_final %>%
+  group_by(Position) %>%
+  summarise(
+    n=n(),
+    Median_Points = median(AVGpoints),
+    Average_Points = mean(AVGpoints),
+    SE_points = sd(AVGpoints)/sqrt(length(AVGpoints)),
+    Median_PlusMinus = median(AVGpm),
+    Average_PlusMinus = mean(AVGpm),
+    SE_pm = sd(AVGpm)/sqrt(length(AVGpm))
+  )
+
+colnames(all_data_summary) <- c("Position", "N", "Median Points", "Average Points", "SE Points", "Median Plus Minus", "Average Plus Minus", "SE Plus Minus")
+
+all_data_summary$Position <- c("Center", "Power Foward", "Point Guard", "Small Foward", "Shooting Guard")
+
+all_data_summary %>% kable(booktabs=TRUE, digits=2) %>% kable_styling(latex_options="hold_position")
+
+
+
+```
+
+
+Next, there’s a table with summary statistics. It shows the median of the average plus-minus and points for each position, the mean of both, and the standard errors. It also includes the number of players at each position, totaling 469
+
+
+
+```{r}
+ggpairs(all_data_final, columns = c(1,3), aes(colour = Position))
+```
+
+
+The third plot above shows density distributions for average points and average plus-minus, grouped by position. It also includes correlations for these variables by position and a scatter plot with different colors for each position. As seen in the plot, there aren’t any clear patterns yet, as much of the data is concentrated between 0 and 10 on the x-axis.
+
+
+```{r}
+
+original_ggplot
+```
+
+The same scatter plot is shown again, but this time on its own so that it can be seen more clearly. Without looking at position, there seems to be a small upward trend as average points increases.
+
+
+
+
+
+
+
+
+
+# Outcome:
+
+
+For the model, we scaled the average points for easier interpretation. This was done by taking each player’s average points, subtracting the mean average points for their position, and then dividing by the standard deviation of average points for that position. This process is known as calculating the z-score. So, if a player’s average points match the average for their position, their z-score would be 0.
+
+In the analysis, we will create a model using stan_glm in R. As mentioned earlier, average plus-minus will be the response variable, while average points scored and position type will be the predictors. We will include an interaction between average points scored and position type to account for different slopes based on position.
+
+We considered applying natural log transformations for the response variable and numeric predictor, testing transformations for just the response, just the predictor, and both together. However, visually, these transformations didn’t improve the relationship between average points and average plus-minus, so we decided not to use any transformations in the model.
+
+Although it is possible to use a prior in Bayesian inference, we didn’t incorporate one for this analysis due to time and space limitations. If we were to include a prior, we might use a horseshoe prior and then compare the model with a prior to this one to determine which fits better.
+
+Here are the results from the model along with some plots of our predictors and response
+
+
+```{r}
+set.seed(2024)
+all_data_final <- all_data_final %>%
+  group_by(Position) %>%
+  mutate(scaled_points = (AVGpoints - mean(AVGpoints))/sd(AVGpoints))
+
+
+fit_1 <- stan_glm(data=all_data_final, AVGpm ~ scaled_points + Position + scaled_points:Position, refresh=0)
+
+
+
+
+ggplot(all_data_final, aes(x=AVGpm, fill=Position)) +
+  geom_density(alpha=0.5) + facet_wrap(~Position) + labs(x="Average Plus Minus", y="Density", title="Average Plus Minus Density Plot for NBA Season 2023-2024")
+
+ggplot(all_data_final, aes(x=scaled_points, fill=Position)) +
+  geom_density(alpha=0.5) + facet_wrap(~Position) + labs(x="Average Points Scaled", y="Density", title="Average Points Density Plot for NBA Season 2023-2024")
+```
+
+
+
+
+
+The first plots display the density of average points and average plus-minus by position type, presenting a different view from the introduction section, where the same plots were overlapping. Here, the distributions are shown individually. For plus-minus, the distributions appear to be roughly normal for each position, which is what we expect. For points, the distributions are skewed to the right for each position. This is also expected, as most players tend to score around the average rather than at the extremes.
+
+
+```{r}
+
+
+coef_table <- data.frame(
+  Coefficient = c("(Intercept)", "scaled_points", "PositionPF", "PositionPG", "PositionSF", 
+                  "PositionSG", "scaled_points:PositionPF", "scaled_points:PositionPG", 
+                  "scaled_points:PositionSF", "scaled_points:PositionSG", "Sigma"),
+  Median = c(0.03, 0.94, -0.18, 0.06, -0.76, -0.61, 0.35, 0.06, -0.27, -0.72, 3.2),
+  MAD_SD = c(0.4, 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.1)
+)
+
+# Create the kable table
+coef_table%>% kable(booktabs=TRUE, digits = 2) %>% kable_styling(latex_options="hold_position")
+
+```
+
+
+Here is a table of the model coeffiecients and there uncertainties (MAD_SD). Interpretations for the coefficients will be in the discussion section of this report.
+
+
+```{r}
+
+
+#center plot
+coefficients <- coef(fit_1)
+intercept <- round(coefficients[1],2) 
+slope <- round(coefficients[2],2) 
+
+center_data <- all_data_final %>%
+  filter(Position == "C")
+
+
+center_plot_c <- ggplot(data=center_data, aes(x=scaled_points,y=AVGpm)) + geom_point() +      
+ geom_abline(slope = slope, intercept = intercept, color = "darkorchid2", size = 1)+  
+    labs(title = "Center",
+         x = "Average Points Scaled",
+         y = "Average PlusMinus") +  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.title = element_text(size=6)
+  )+ theme_classic()
+
+########################################################################
+#Power Foward Plot
+
+coefficients <- coef(fit_1)
+intercept <- round(coefficients[1],2) + round(coefficients[3], 2)
+slope <- round(coefficients[2],2) + round(coefficients[7],2)
+
+pf_data <- all_data_final %>%
+  filter(Position == "PF")
+
+
+pf_plot_c <- ggplot(data=pf_data, aes(x=scaled_points,y=AVGpm)) + geom_point() +                     
+ geom_abline(slope = slope, intercept = intercept, color = "darkorchid2", size = 1)+  
+    labs(title = "Power Foward",
+         x = "Average Points Scaled",
+         y = "Average PlusMinus") +  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size= 18),
+    axis.title = element_text(size=6)
+  )+ theme_classic()
+
+
+######################################################################
+#point guard plot
+
+coefficients <- coef(fit_1)
+intercept <- round(coefficients[1],2) + round(coefficients[4], 2)
+slope <- round(coefficients[2],2) + round(coefficients[8],2)
+
+pg_data <- all_data_final %>%
+  filter(Position == "PG")
+
+
+pg_plot_c <- ggplot(data=pg_data, aes(x=scaled_points,y=AVGpm)) + geom_point() +             
+ geom_abline(slope = slope, intercept = intercept, color = "darkorchid2", size = 1)+  
+    labs(title = "Point Guard",
+         x = "Average Points Scaled",
+         y = "Average PlusMinus") +  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.title = element_text(size=10)
+  )+ theme_classic()
+
+######################################################################
+#small foward plot
+
+coefficients <- coef(fit_1)
+intercept <- round(coefficients[1],2) + round(coefficients[5], 2)
+slope <- round(coefficients[2],2) + round(coefficients[9],2)
+
+sf_data <- all_data_final %>%
+  filter(Position == "SF")
+
+sf_plot_c <- ggplot(data=sf_data, aes(x=scaled_points,y=AVGpm)) + geom_point() +            
+ geom_abline(slope = slope, intercept = intercept, color = "darkorchid2", size = 1)+  
+    labs(title = "Small Forward",
+         x = "Average Points Scaled",
+         y = "Average PlusMinus") +  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.title = element_text(size=10)
+  )+ theme_classic()
+
+##########################################################################
+
+#shooting guard plots
+
+coefficients <- coef(fit_1)
+intercept <- round(coefficients[1],2) + round(coefficients[6], 2)
+slope <- round(coefficients[2],2) + round(coefficients[10],2)
+
+sg_data <- all_data_final %>%
+  filter(Position == "SG")
+
+
+sg_plot_c <- ggplot(data=sg_data, aes(x=scaled_points,y=AVGpm)) + geom_point() +                     
+ geom_abline(slope = slope, intercept = intercept, color = "darkorchid2", size = 1)+  
+    labs(title = "Shooting Guard",
+         x = "Average Points Scaled",
+         y = "Average PlusMinus") +  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.title = element_text(size=10)
+  )+ theme_classic()
+
+
+
+ggarrange(center_plot_c, pf_plot_c, pg_plot_c, sf_plot_c, sg_plot_c) %>%
+  annotate_figure(top = text_grob("Average Plus Minus vs. Scaled Average Points for Each Position", size = 14, face = "bold"))
+```
+
+The grid of scatter plots is taken from the model so that the slope for each position can be seen visually, not just explained in interpretations below.
+
+
+
+
+# Discussion:
+
+The results from the model are shown above. The regular output is shown as well as a kable table of the coefficients. Both are shown for inference and also cleanliness. The goal of the analysis was to look at the different slopes for different positions. The goal was not to predict or anything like that so we will not talk about the importance of any of the variables or interactions, but there will still be some discussion on the results. Below are the interpretations for the output.
+
+We have an estimated standard deviation of the residuals of 3.2.
+
+
+Estimated PlusMinus for Center: 
+
+For a center in the NBA with an average amount of points that is equal to the average amount for a center (a z-score of 0), we expect on average their average plus minus to be 0.03. 
+
+Estimated PlusMinus for Power Forward:
+
+For a Power Forward in the NBA with an average amount of points that is equal to the average amount for a Power Forward (a z-score of 0), we expect on average their average plus minus to be -0.15.
+
+Estimated PlusMinus for Point Guard:
+
+For a Point Guard in the NBA with an average amount of points that is equal to the average amount for a Point Guard (a z-score of 0), we expect on average their average plus minus to be 0.09.
+
+
+Estimated PlusMinus for Small Forward:
+
+For a Small Forward in the NBA with an average amount of points that is equal to the average amount for a Small Forward (a z-score of 0), we expect on average their average plus minus to be -0.73.
+
+Estimated PlusMinus for Shooting Guard:
+
+For a Shooting Guard in the NBA with an average amount of points that is equal to the average amount for a Shooting Guard (a z-score of 0), we expect on average their average plus minus to be -0.58.
+
+
+Another way to look at interpretations is not just zeroing predictors, but looking at slopes. When comparing two power forwards in the nba who differ by 1 standard deviation in average points, we expect the estimated difference on average for average plus minus to be 1.29. This is the largest slope of any of the positions. Thus power forwards have the largest expected difference in plus minus based off of the difference in standard deviations for a player. 
+
+The position with the smallest slope is shooting guard. For some, this might be a little shocking because usually shooting guards are very good at scoring. But since plus minus also takes into account the opponents scoring as well, this makes sense. Maybe on average in the NBA shooting guards are not the best at defense. Of course the defense also has to do with other players on the court, but the defense ability of shooting guards might be lower than other positions. 
+
+For each position type, lets say we are looking at each type of player that has an average points 1 standard deviation away from the mean. 
+
+For a center, the average expected average plus minus will be 0.97, when the center has a value of average points that is one standard deviation away from the mean. 
+
+For a power forward, the average expected average plus minus will be 1.14, when the power forward has a value of average points that is one standard deviation away from the mean.
+
+For a point guard, the average expected average plus minus will be 1.09, when the point guard has a value of average points that is one standard deviation away from the mean. 
+
+For a small forward, the average expected average plus minus will be -0.06, when the small forward has a value of average points that is one standard deviation away from the mean.
+
+For a shooting guard, the average expected average plus minus will be -0.36, when the shooting guard has a value of average points that is one standard deviation away from the mean.
+
+In summary, shooting guards tend to have the smallest slope and lowest expected average plus minus in terms of 1 standard deviation difference, while power forwards tend to have the largest slope and largest expected average plus minus in terms of 1 standard deviation difference. It would be interesting to see how these values have changed over the years. This could be something that could be investigated in the future. But for now, this is the  conclusion on the association between average plus minus and average points based on position type in the NBA for the 2023-2024 Regular Season.
+
+
+
+# References:
+
+“Plus/Minus - Nba.Com: Jr.. NBA.” NBA.Com, 13 Oct. 2015, jr.nba.com/plusminus/.
+
